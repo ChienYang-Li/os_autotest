@@ -1,0 +1,30 @@
+#!/bin/sh
+
+ETH=$interface
+
+case "$1" in
+    renew|bound)
+        [ -n "$mask" ] && netmask=`ipcalc -m $mask | awk -F '=' '{print $2}'`
+        [ -n "$subnet" ] && netmask=$subnet
+
+        ifconfig $ETH $ip netmask $netmask
+
+        while route del default gw 0.0.0.0 dev $ETH; do
+            :
+        done
+        for x in $router; do
+            route add default gw $x dev $ETH
+        done
+
+        > /etc/resolv.conf
+        for x in $dns; do
+            echo nameserver $x >> /etc/resolv.conf
+        done
+        ;;
+
+    *)
+        ifconfig $ETH 0.0.0.0
+        ;;
+esac
+
+exit 0

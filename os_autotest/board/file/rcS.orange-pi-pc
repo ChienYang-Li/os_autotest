@@ -1,0 +1,98 @@
+#! /bin/sh
+
+HOME=/root
+
+mount -a
+
+mkdir /dev/pts
+mount -t devpts devpts /dev/pts
+
+echo /sbin/mdev > /proc/sys/kernel/hotplug
+mdev -s
+
+cp -r /etc /tmp/etc
+mount -t tmpfs tmpfs /etc
+cp -r /tmp/etc/* /etc
+rm -rf /tmp/etc
+
+mount /dev/mmcblk0p2 /zconf > /dev/null 2>&1
+if [ ! -f /zconf/uuid ]; then
+
+    mkfs.vfat /dev/mmcblk0p2
+    mount /dev/mmcblk0p2 /zconf
+    echo -n `cat /proc/sys/kernel/random/uuid` > /zconf/uuid
+    tr -dc A-F0-9 < /dev/urandom | head -c 10 | sed -r 's/(..)/\1:/g;s/:$//;s/^/02:/' > /zconf/mac
+fi
+
+echo -n "root:" > /etc/passwd
+echo -n `echo 27976720 | mkpasswd` >> /etc/passwd
+echo ":0:0::/:/bin/sh" >> /etc/passwd
+
+echo "root::0:" > /etc/group
+
+ifconfig lo 127.0.0.1 up
+
+MAC=`cat /zconf/mac`
+
+ifconfig eth0 hw ether $MAC up
+ifconfig eth0 up
+
+udhcpc -i eth0 -b -A 3 -p /tmp/udhcpc.pid &
+
+
+## USB gadget
+CONFIGFS_HOME=/sys/kernel/config
+mount none $CONFIGFS_HOME -t configfs
+
+cd $CONFIGFS_HOME/usb_gadget
+mkdir pi && cd pi
+
+echo 0x1d6b > idVendor
+echo 0x0104 > idProduct
+echo 0x0100 > bcdDevice
+echo 0x0200 > bcdUSB
+mkdir -p strings/0x409
+echo "iCatch Inc." > strings/0x409/manufacturer
+echo "USB Mouse"   > strings/0x409/product
+echo ""            > strings/0x409/serialnumber
+
+mkdir -p configs/c.1
+
+# USB gadget - HID mouse
+mkdir -p functions/hid.0
+echo 1  > functions/hid.0/subclass
+echo 2  > functions/hid.0/protocol
+echo 8  > functions/hid.0/report_length
+echo -ne \\x05\\x01\\x09\\x02\\xa1\\x01\\x09\\x01\\xa1\\x00\\x05\\x09\\x19\\x01\\x29\\x08\\x15\\x00\\x25\\x01\\x75\\x01\\x95\\x08\\x81\\x02\\x05\\x01\\x16\\x01\\xf8\\x26\\xff\\x07\\x75\\x0c\\x95\\x02\\x09\\x30\\x09\\x31\\x81\\x06\\x15\\x81\\x25\\x7f\\x75\\x08\\x95\\x01\\x09\\x38\\x81\\x06\\x05\\x0c\\x0a\\x38\\x02\\x95\\x01\\x81\\x06\\xc0\\xc0 > functions/hid.0/report_desc
+
+# USB gadget - Mass Storage
+mkdir -p functions/mass_storage.0/lun.0
+dd if=/dev/zero of=/tmp/lun0.img bs=1M count=16
+
+# USB gadget ON
+ln -s functions/hid.0 configs/c.1
+ln -s functions/mass_storage.0 configs/c.1
+ls /sys/class/udc > UDC
+
+
+mkfs.vfat /tmp/lun0.img
+mkdir -p /tmp/lun0
+mount /tmp/lun0.img /tmp/lun0
+
+#echo "" > /sys/kernel/config/usb_gadget/pi/functions/mass_storage.0/lun.0/file
+#echo /tmp/lun0.img > /sys/kernel/config/usb_gadget/pi/functions/mass_storage.0/lun.0/file
+
+ntpd -p time.nist.gov
+
+echo 13 > /sys/class/gpio/export
+echo out > /sys/class/gpio/gpio13/direction
+#echo 1 > /sys/class/gpio/gpio13/value
+#echo 0 > /sys/class/gpio/gpio7/value
+
+
+# mkdir /tmp/nfs
+# mount -t nfs -o nolock 192.168.3.46:/home/javierli/factory-pi/.work/nfs /tmp/nfs
+# export TESSDATA_PREFIX=/tmp/nfs/tessdata
+
+# cd /tmp/nfs
+# ./8ch.sh &
